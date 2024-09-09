@@ -55,7 +55,7 @@ func doServerJob() {
 }
 
 func doClientJob(otherProcess int, i int) {
-	msg := Message{123, "Teste"}      // A mensagem será fixa. Sempre com Code 123 e Text "teste"
+	msg := Message{i, "Teste"}        // A mensagem será fixa. Sempre com Code "i" e Text "Teste"
 	jsonMsg, err := json.Marshal(msg) // Agora json fará parte dos imports
 	PrintError(err)
 
@@ -68,7 +68,7 @@ func initConnections() {
 	nServers = len(os.Args) - 2 // Esse 2 tira o nome ("Process") e tira a primeira porta (que é a minha). As demais portas são dos outros processos
 	CliConn = make([]*net.UDPConn, nServers)
 
-	/* Outros códigos para deixar ok a conexão do meu servidor (one recebo msgs). O processo já deve ficar habilitado a receber msgs. */
+	/* Outros códigos para deixar ok a conexão do meu servidor (onde recebo msgs). O processo já deve ficar habilitado a receber msgs. */
 
 	ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+myPort)
 	CheckError(err)

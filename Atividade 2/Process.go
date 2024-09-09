@@ -9,7 +9,9 @@ import (
 )
 
 // Variáveis globais interessantes para o procseso
-var myPort string          // porta do meu servidor
+// var myPort string // porta do meu servidor (ANTIGO)
+var myAddress string // endereço do meu servidor (NOVO)
+
 var nServers int           // qtde de outros processos
 var CliConn []*net.UDPConn // vetor com conexões para os servidores
 // dor outros processos
@@ -48,20 +50,24 @@ func doClientJob(otherProcess int, i int) {
 }
 
 func initConnections() {
-	myPort = os.Args[1]
+	// myPort = os.Args[1] // ANTIGO
+	myAddress = os.Args[1] // NOVO
+
 	nServers = len(os.Args) - 2 // Esse 2 tira o nome ("Process") e tira a primeira porta (que é a minha). As demais portas são dos outros processos
 	CliConn = make([]*net.UDPConn, nServers)
 
 	/* Outros códigos para deixar ok a conexão do meu servidor (one recebo msgs). O processo já deve ficar habilitado a receber msgs. */
 
-	ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+myPort)
+	// ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+myPort) // ANTIGO
+	ServerAddr, err := net.ResolveUDPAddr("udp", myAddress) // NOVO
 	CheckError(err)
 	ServConn, err = net.ListenUDP("udp", ServerAddr)
 	CheckError(err)
 
 	/* Outros códigos para deixar ok a minha conexão com cada servidor dos outros processos. Colocar tais conexões no vetor CliConn. */
 	for s := 0; s < nServers; s++ {
-		ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+os.Args[2+s])
+		// ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+os.Args[2+s]) // ANTIGO
+		ServerAddr, err := net.ResolveUDPAddr("udp", os.Args[2+s]) // NOVO
 		CheckError(err)
 
 		/* Aqui não foi definido o endereço do cliente. Usando nil, o próprio sistema escolhe. */
