@@ -41,12 +41,14 @@ type MessageToSharedResource struct {
 // Variáveis globais interessantes para o procseso
 
 // Deste processo
-var processId int // Id do processo atual
-var clock int     // Clock do processo atual (logical scalar clock)
-var state int     // Estado do processo: RELEASED, WANTED ou HELD (Ricart-Agrawala)
+var processId int    // Id do processo atual
+var clock int        // Clock do processo atual (logical scalar clock)
+var requestClock int // Clock do request, atualizado ao entrar no WANTED, usado para comparar com requests recebidos
+var state int        // Estado do processo: RELEASED, WANTED ou HELD (Ricart-Agrawala)
 
-var replyCount int         // Contador de replies recebidos
+var replyMap map[int]bool  // Mapa para rastrear quais processos já enviaram reply
 var requestQueue []Message // Fila de requests recebidos e não atendidos
+var doneReplying chan bool // Canal de sinalização para garantir a execução atômica de releaseCriticalSection
 
 var myPort string // porta do meu servidor
 // var CliConn []*net.UDPConn // vetor com conexões para os servidores // ANTIGO
@@ -129,13 +131,21 @@ func doServerJob() {
 
 		} else if receivedMsg.Text == "reply" {
 			// Tratar a mensagem de reply
-			handleReply()
+			handleReply(receivedMsg)
 		}
 	}
 }
 
 func handleRequest(receivedMsg Message) {
-	if state == HELD || (state == WANTED && clock < receivedMsg.Clock) {
+	// Atualiza o clock lógico com base na mensagem recebida
+	clock = max(clock, receivedMsg.Clock) + 1
+
+	// Escrever na tela a msg recebida (indicando o endereço de quem enviou)
+	color.Set(color.FgHiWhite)
+	fmt.Printf("Received '%s' from %v with clock %d | Clock: %d\n", receivedMsg.Text, receivedMsg.ProcessId, receivedMsg.Clock, clock)
+	color.Unset()
+
+	if state == HELD || (state == WANTED && (requestClock < receivedMsg.Clock || (requestClock == receivedMsg.Clock && processId < receivedMsg.ProcessId))) {
 		// Enfileirar o request, não responder imediatamente
 		color.Set(color.FgHiWhite)
 		fmt.Printf("Enfileirando request do processo (id = %d, clock = %d)\n", receivedMsg.ProcessId, receivedMsg.Clock)
@@ -146,23 +156,25 @@ func handleRequest(receivedMsg Message) {
 		color.Set(color.FgHiWhite)
 		fmt.Printf("Enviando reply imediato para o processo %d\n", receivedMsg.ProcessId)
 		color.Unset()
-		doClientJob(receivedMsg.ProcessId, "reply", clock) // Sem incrementar o clock
+		go doClientJob(receivedMsg.ProcessId, "reply", clock) // Sem incrementar o clock
 	}
 
-	// Atualiza o clock lógico com base na mensagem recebida
-	clock = max(clock, receivedMsg.Clock) + 1
-
-	// Escrever na tela a msg recebida (indicando o endereço de quem enviou)
-	color.Set(color.FgHiWhite)
-	fmt.Printf("Received '%s' from %v with clock %d | Clock: %d\n", receivedMsg.Text, receivedMsg.ProcessId, receivedMsg.Clock, clock)
-	color.Unset()
 }
 
-func handleReply() {
-	replyCount++
-	color.Set(color.FgHiWhite)
-	fmt.Printf("Reply recebido | replyCount: %d\n", replyCount)
-	color.Unset()
+func handleReply(receivedMsg Message) {
+	if state == WANTED {
+		if !replyMap[receivedMsg.ProcessId] {
+			replyMap[receivedMsg.ProcessId] = true // Marca que recebeu reply deste processo
+			color.Set(color.FgHiWhite)
+			fmt.Printf("Reply recebido do processo %d | Total replies: %d\n", receivedMsg.ProcessId, len(replyMap))
+			color.Unset()
+		} else {
+			// Se já recebeu, ignora o reply duplicado
+			color.Set(color.FgHiWhite)
+			fmt.Printf("Reply duplicado recebido do processo %d\n", receivedMsg.ProcessId)
+			color.Unset()
+		}
+	}
 }
 
 func doClientJob(otherProcessId int, text string, clock int) {
@@ -242,25 +254,32 @@ func handleKeyboardInput(input string) {
 }
 
 func requestCriticalSection() {
+	// Verifica se ainda está liberando a seção crítica
+	if <-doneReplying {
+		color.Set(color.FgHiRed)
+		fmt.Println("Ainda liberando a seção crítica. Aguardando para entrar no estado WANTED...")
+		color.Unset()
+		return
+	}
+
+	clock++
+	requestClock = clock // Armazena o clock atual para os requests
 	state = WANTED
 	printState() // Imprime o estado após mudança
 
-	// Simular o envio de mensagens de "request" para outros processos
-	// Incrementar o clock uma vez antes de enviar os requests
-	clock++
 	color.Set(color.FgHiWhite)
-	fmt.Println("Solicitando acesso à seção crítica (enviando requests)... | Clock:", clock)
+	fmt.Println("Solicitando acesso à seção crítica (enviando requests)... | Clock:", requestClock)
 	color.Unset()
 
 	// Enviar requests para todos os outros processos
 	for otherProcessId := 1; otherProcessId <= nServers+1; otherProcessId++ {
 		if otherProcessId != processId { // Não envia request para si mesmo
-			doClientJob(otherProcessId, "request", clock)
+			go doClientJob(otherProcessId, "request", requestClock)
 		}
 	}
 
 	// Esperar até receber N-1 replies
-	for replyCount < nServers {
+	for len(replyMap) < nServers {
 		time.Sleep(500 * time.Millisecond) // Espera um curto intervalo antes de checar novamente
 	}
 
@@ -301,15 +320,38 @@ func enterCriticalSection() {
 }
 
 func releaseCriticalSection() {
+	// O canal indica que o releaseCriticalSection começou
+	doneReplying <- true
+
 	state = RELEASED
 	printState() // Imprime o estado após mudança
 	color.Set(color.FgHiWhite)
 	fmt.Println("Liberando a seção crítica...") // Exibe mensagem de liberação
 	color.Unset()
 
-	// Simular o envio de mensagens de liberação (RELEASE) para outros processos
-	// Você pode chamar doClientJob() aqui para simular a liberação da CS para outros processos
+	// Enviar replys para todos os processos na fila (requestQueue)
+	for _, request := range requestQueue {
+		color.Set(color.FgHiWhite)
+		fmt.Printf("Enviando reply para o processo %d\n", request.ProcessId)
+		color.Unset()
+
+		// Enviar a mensagem de reply para o processo que estava enfileirado
+		go doClientJob(request.ProcessId, "reply", clock)
+	}
+	requestQueue = []Message{} // Limpar a fila de requests
+
+	replyMap = make(map[int]bool) // Reinicia o mapa de replies
+
+	// Quando terminar, libera o canal
+	doneReplying <- false
 }
+
+// func printStatePeriodically() {
+// 	for {
+// 		fmt.Println("Estado atual:", state)
+// 		time.Sleep(5 * time.Second) // Pausa por 5 segundos
+// 	}
+// }
 
 func main() {
 	// Parâmetros esperados: id do processo, portas dos processos
@@ -337,6 +379,12 @@ func main() {
 	clock = 0
 	state = RELEASED // O estado inicial é RELEASED, ou seja, o processo não está na CS nem esperando
 	printState()     // Imprime o estado após mudança
+	// go printStatePeriodically()
+
+	// Inicializa o map de replies
+	replyMap = make(map[int]bool)
+	doneReplying = make(chan bool, 1) // Canal para sinalizar a execução atômica de releaseCriticalSection
+	doneReplying <- false             // Inicializa o canal com false
 
 	// Inicializa as conexões
 	initConnections()
