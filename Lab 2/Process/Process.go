@@ -12,55 +12,56 @@ import (
 	"github.com/fatih/color"
 )
 
-// Definição de estados usando iota para simular enum
+// Definition of states using iota to simulate enum
 const (
-	RELEASED = iota // 0: O processo não está tentando acessar a CS
-	WANTED          // 1: O processo quer acessar a CS
-	HELD            // 2: O processo está na CS
+	RELEASED = iota // 0: The process is not attempting to access the CS
+	WANTED          // 1: The process wants to access the CS
+	HELD            // 2: The process is in the CS
 )
 
-// Constante para a porta do SharedResource
+// Constant for the SharedResource port
 const sharedResourcePort = "10001"
 
-// Definição de Structs
+// Struct definitions
 
-// Mensagem que será enviada entre os processos
+// Message that will be sent between processes
 type Message struct {
-	ProcessId int    // Devemos usar letra maiúscula para definir os campos da struct.
-	Text      string // Assim eles serão exportados, ou seja, Vistos por outras packages (incluindo o json).
-	Clock     int    // Clock da mensagem
+	ProcessId int    // Uppercase to export fields for visibility in JSON
+	Text      string // Message text
+	Clock     int    // Logical clock of the message
 }
 
-// Mensagem que será enviada para o recurso compartilhado
+// Message that will be sent to the shared resource
 type MessageToSharedResource struct {
-	ProcessId int    // Processo que enviou a mensagem
-	Text      string // Texto da mensagem
-	Clock     int    // Clock da mensagem
+	ProcessId int    // Process ID that sent the message
+	Text      string // Text of the message
+	Clock     int    // Logical clock of the message
 }
 
-// Variáveis globais interessantes para o procseso
+// Global variables for the process
 
-// Deste processo
-var processId int    // Id do processo atual
-var clock int        // Clock do processo atual (logical scalar clock)
-var requestClock int // Clock do request, atualizado ao entrar no WANTED, usado para comparar com requests recebidos
-var state int        // Estado do processo: RELEASED, WANTED ou HELD (Ricart-Agrawala)
+// Current process
+var processId int    // ID of the current process
+var clock int        // Logical clock of the current process
+var requestClock int // Clock of the request, updated when entering the WANTED state, used to compare with received requests
+var state int        // State of the process: RELEASED, WANTED, or HELD (Ricart-Agrawala)
 
-var replyMap map[int]bool  // Mapa para rastrear quais processos já enviaram reply
-var requestQueue []Message // Fila de requests recebidos e não atendidos
-var isReleasing bool
+// Other important variables
+var replyMap map[int]bool  // Map to track which processes have already replied
+var requestQueue []Message // Queue of requests received but not yet processed
+var isReleasing bool       // Flag to indicate if the process is currently releasing the CS
 
-var myPort string // porta do meu servidor
-// var CliConn []*net.UDPConn // vetor com conexões para os servidores // ANTIGO
-var CliConn map[int]*net.UDPConn    // Map de conexões com outros processos (mapeia ID do processo para a conexão UDP) // NOVO
-var sharedResourceConn *net.UDPConn // Conexão com o SharedResource (seção crítica)
+var myPort string // Server port for this process
+// var CliConn []*net.UDPConn // Old: Vector with connections to other servers
+var CliConn map[int]*net.UDPConn    // New: Map of connections to other processes (maps process ID to UDP connection)
+var sharedResourceConn *net.UDPConn // Connection to the SharedResource (critical section)
 
-// Dos outros processos
-var nServers int          // qtde de outros processos
-var ServConn *net.UDPConn // conexão do meu servidor (onde recebo mensagens dos outros processos)
+// Variables for other processes
+var nServers int          // Number of other processes
+var ServConn *net.UDPConn // Server connection for receiving messages from other processes
 
+// Routine to "listen" to stdin (keyboard input)
 func readInput(ch chan string) {
-	// Rotina que "escuta" o stdin
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		text, _, _ := reader.ReadLine()
@@ -68,24 +69,26 @@ func readInput(ch chan string) {
 	}
 }
 
+// Error handling function
 func CheckError(err error) {
 	if err != nil {
 		color.Set(color.FgRed)
-		fmt.Println("Error: ", err)
+		fmt.Println("Error:", err)
 		color.Unset()
 		os.Exit(0)
 	}
 }
 
+// Function to print error messages
 func PrintError(err error) {
 	if err != nil {
 		color.Set(color.FgRed)
-		fmt.Println("Error: ", err)
+		fmt.Println("Error:", err)
 		color.Unset()
 	}
 }
 
-// Função para imprimir o estado atual com cores e formatação
+// Function to print the current state with colors and formatting
 func printState() {
 	var stateStr string
 	var stateColor *color.Color
@@ -102,320 +105,321 @@ func printState() {
 		stateColor = color.New(color.FgRed).Add(color.Bold)
 	}
 
-	// Formatação do estado com alinhamento central
+	// Format and print the state centered
 	color.Set(color.FgHiWhite)
 	fmt.Print("\n+------------------+\n")
 	fmt.Printf("|     ")
-	stateColor.Printf("%-8s", stateStr) // Exibe o estado com cor e alinhado
+	stateColor.Printf("%-8s", stateStr) // Display the state with color and centered
 	color.Set(color.FgHiWhite)
 	fmt.Print("     |\n")
 	fmt.Print("+------------------+\n")
-	color.Unset() // Reseta cor para o padrão
+	color.Unset() // Reset color to default
 }
 
+// Function responsible for receiving messages from other processes
 func doServerJob() {
 	buf := make([]byte, 1024)
 	for {
-		// Ler (uma vez somente) da conexão UDP a mensagem
+		// Read a message from the UDP connection
 		n, _, err := ServConn.ReadFromUDP(buf)
 		PrintError(err)
 
-		// Deserializa a mensagem recebida
+		// Deserialize the received message
 		var receivedMsg Message
 		err = json.Unmarshal(buf[:n], &receivedMsg)
 		PrintError(err)
 
 		if receivedMsg.Text == "request" {
-			// Tratar a mensagem de request
+			// Handle the request message
 			handleRequest(receivedMsg)
-
 		} else if receivedMsg.Text == "reply" {
-			// Tratar a mensagem de reply
+			// Handle the reply message
 			handleReply(receivedMsg)
 		}
 	}
 }
 
+// Handle the received request message
 func handleRequest(receivedMsg Message) {
-	// Atualiza o clock lógico com base na mensagem recebida
+	// Update the logical clock based on the received message
 	clock = max(clock, receivedMsg.Clock) + 1
 
-	// Escrever na tela a msg recebida (indicando o endereço de quem enviou)
+	// Display the received message
 	color.Set(color.FgHiWhite)
-	fmt.Printf("Received '%s' from %v with clock %d | Clock: %d\n", receivedMsg.Text, receivedMsg.ProcessId, receivedMsg.Clock, clock)
+	fmt.Printf("Received '%s' from process %d with clock %d | Current clock: %d\n", receivedMsg.Text, receivedMsg.ProcessId, receivedMsg.Clock, clock)
 	color.Unset()
 
+	// Decide whether to queue the request or reply immediately
 	if state == HELD || (state == WANTED && (requestClock < receivedMsg.Clock || (requestClock == receivedMsg.Clock && processId < receivedMsg.ProcessId))) {
-		// Enfileirar o request, não responder imediatamente
+		// Queue the request, do not reply immediately
 		color.Set(color.FgHiWhite)
-		fmt.Printf("Enfileirando request do processo (id = %d, clock = %d)\n", receivedMsg.ProcessId, receivedMsg.Clock)
+		fmt.Printf("Queuing request from process %d (clock = %d)\n", receivedMsg.ProcessId, receivedMsg.Clock)
 		color.Unset()
 		requestQueue = append(requestQueue, receivedMsg)
 	} else {
-		// Responder com um reply imediatamente
+		// Send an immediate reply
 		color.Set(color.FgHiWhite)
-		fmt.Printf("Enviando reply imediato para o processo %d\n", receivedMsg.ProcessId)
+		fmt.Printf("Sending immediate reply to process %d\n", receivedMsg.ProcessId)
 		color.Unset()
-		go doClientJob(receivedMsg.ProcessId, "reply", clock) // Sem incrementar o clock
+		go doClientJob(receivedMsg.ProcessId, "reply", clock) // Reply without incrementing the clock
 	}
-
 }
 
+// Handle the received reply message
 func handleReply(receivedMsg Message) {
 	if state == WANTED {
 		if !replyMap[receivedMsg.ProcessId] {
-			replyMap[receivedMsg.ProcessId] = true // Marca que recebeu reply deste processo
+			// Mark that a reply was received from this process
+			replyMap[receivedMsg.ProcessId] = true
 			color.Set(color.FgHiWhite)
-			fmt.Printf("Reply recebido do processo %d | Total replies: %d\n", receivedMsg.ProcessId, len(replyMap))
+			fmt.Printf("Reply received from process %d | Total replies: %d\n", receivedMsg.ProcessId, len(replyMap))
 			color.Unset()
 		} else {
-			// Se já recebeu, ignora o reply duplicado
+			// Ignore duplicate replies
 			color.Set(color.FgHiWhite)
-			fmt.Printf("Reply duplicado recebido do processo %d\n", receivedMsg.ProcessId)
+			fmt.Printf("Duplicate reply received from process %d\n", receivedMsg.ProcessId)
 			color.Unset()
 		}
 	}
 }
 
+// Function to send messages to other processes
 func doClientJob(otherProcessId int, text string, clock int) {
-	// Cria a mensagem com o texto fornecido (ex: "request" ou "reply")
+	// Create the message to be sent (e.g., "request" or "reply")
 	msg := Message{ProcessId: processId, Text: text, Clock: clock}
 
-	jsonMsg, err := json.Marshal(msg) // Serializa a mensagem para JSON
+	// Serialize the message to JSON
+	jsonMsg, err := json.Marshal(msg)
 	PrintError(err)
 
-	// Envia a mensagem para o processo correspondente no map
+	// Send the message to the corresponding process using the map of connections
 	conn := CliConn[otherProcessId]
 	_, err = conn.Write(jsonMsg)
 	PrintError(err)
 }
 
-func initConnections() {
-	myPort = os.Args[1+processId]        // Porta do meu servidor
-	nServers = len(os.Args) - 3          // Calcula o número de servidores (processos restantes)
-	CliConn = make(map[int]*net.UDPConn) // Inicializa o map de conexões
-
-	/* Outros códigos para deixar ok a conexão do meu servidor (onde recebo msgs). O processo já deve ficar habilitado a receber msgs. */
-
-	ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+myPort)
-	CheckError(err)
-	ServConn, err = net.ListenUDP("udp", ServerAddr)
-	CheckError(err)
-
-	/* Inicializa a conexão com o SharedResource (seção crítica) */
-	sharedResourceAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:"+sharedResourcePort)
-	CheckError(err)
-	sharedResourceConn, err = net.DialUDP("udp", nil, sharedResourceAddr) // Criar conexão global com o SharedResource
-	CheckError(err)
-
-	/* Outros códigos para deixar ok a minha conexão com cada servidor dos outros processos. Colocar tais conexões no vetor CliConn. */
-	for s := 0; s < nServers+1; s++ {
-		if s == processId-1 { // Pula a própria porta
-			continue
-		}
-
-		// ID do processo para o qual estamos conectando
-		otherProcessId := s + 1
-
-		// Resolve o endereço do servidor
-		ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+os.Args[2+s])
-		CheckError(err)
-
-		// Estabelece a conexão UDP e armazena no map usando o ID do processo
-		Conn, err := net.DialUDP("udp", nil, ServerAddr)
-		CliConn[otherProcessId] = Conn
-		CheckError(err)
-	}
-}
-
+// Handle keyboard input (stdin)
 func handleKeyboardInput(input string) {
 	if input == "x" {
-		// Se o processo já está na CS ou aguardando, ignorar "x"
+		// If the process is already in CS or waiting, ignore "x"
 		if state == WANTED || state == HELD {
 			color.Set(color.FgHiWhite)
-			fmt.Println("x ignorado, processo já está aguardando ou na seção crítica")
+			fmt.Println("Ignored 'x', process is already waiting or in critical section")
 			color.Unset()
 		} else {
 			if isReleasing {
 				color.Set(color.FgHiWhite)
-				fmt.Println("x ignorado, processo está liberando a seção crítica")
+				fmt.Println("Ignored 'x', process is currently releasing the critical section")
 				color.Unset()
 			} else {
-				// Caso receba 'x', solicita acesso à seção crítica
+				// If 'x' is received, request access to the critical section
 				requestCriticalSection()
 			}
 		}
 	} else if id, err := strconv.Atoi(input); err == nil && id == processId {
-		// Caso receba o ID do processo, incrementa o clock lógico
+		// If the process ID is received, increment the logical clock
 		clock++
 		color.Set(color.FgHiWhite)
-		fmt.Printf("Evento interno! | Clock: %d\n", clock)
+		fmt.Printf("Internal event! | Clock: %d\n", clock)
 		color.Unset()
 	} else {
-		// Entrada inválida
+		// Invalid input
 		color.Set(color.FgRed)
-		fmt.Printf("Entrada '%s' inválida. Digite 'x' ou o id do processo (%d).\n", input, processId)
+		fmt.Printf("Invalid input '%s'. Enter 'x' or the process ID (%d).\n", input, processId)
 		color.Unset()
 	}
 }
 
+// Request access to the critical section
 func requestCriticalSection() {
 	clock++
-	requestClock = clock // Armazena o clock atual para os requests
+	requestClock = clock // Store the current clock for requests
 	state = WANTED
-	printState() // Imprime o estado após mudança
+	printState() // Print the state after the change
 
 	color.Set(color.FgHiWhite)
-	fmt.Println("Solicitando acesso à seção crítica (enviando requests)... | Clock:", requestClock)
+	fmt.Println("Requesting access to the critical section (sending requests)... | Clock:", requestClock)
 	color.Unset()
 
-	// Enviar requests para todos os outros processos
+	// Send requests to all other processes
 	for otherProcessId := 1; otherProcessId <= nServers+1; otherProcessId++ {
-		if otherProcessId != processId { // Não envia request para si mesmo
+		if otherProcessId != processId { // Don't send a request to myself
 			go doClientJob(otherProcessId, "request", requestClock)
 		}
 	}
 
-	// Esperar até receber N-1 replies
+	// Wait until N-1 replies are received
 	for len(replyMap) < nServers {
-		time.Sleep(2000 * time.Millisecond) // Espera um curto intervalo antes de checar novamente
+		time.Sleep(2000 * time.Millisecond) // Wait a short interval before checking again
 	}
 
-	// Simulação de entrada na seção crítica (recebimento de replies de outros processos)
+	// Simulate entering the critical section (received replies from all processes)
 	enterCriticalSection()
 }
 
+// Enter the critical section
 func enterCriticalSection() {
 	state = HELD
-	printState() // Imprime o estado após mudança
+	printState() // Print the state after the change
 
-	// Obter a porta local da conexão `sharedResourceConn`
-	localAddr := sharedResourceConn.LocalAddr().(*net.UDPAddr) // Converte para o tipo *net.UDPAddr
+	// Get the local port of the sharedResourceConn connection
+	localAddr := sharedResourceConn.LocalAddr().(*net.UDPAddr) // Convert to *net.UDPAddr
 	color.Set(color.FgHiWhite)
-	fmt.Printf("Entrando na seção crítica pela porta %d\n", localAddr.Port) // Exibe a porta local usada como cliente
+	fmt.Printf("Entering critical section through port %d\n", localAddr.Port) // Show the local port used
 	color.Unset()
 
-	// Criar a mensagem para enviar ao SharedResource
+	// Create the message to be sent to the SharedResource
 	msg := MessageToSharedResource{
 		ProcessId: processId,
 		Text:      "Hello, CS!",
 		Clock:     clock,
 	}
 
-	// Serializar a mensagem para JSON
+	// Serialize the message to JSON
 	jsonMsg, err := json.Marshal(msg)
 	CheckError(err)
 
-	// Enviar a mensagem ao SharedResource usando a conexão global `sharedResourceConn`
+	// Send the message to the SharedResource using the global connection `sharedResourceConn`
 	_, err = sharedResourceConn.Write(jsonMsg)
 	CheckError(err)
 
-	// Simular o uso da CS (dormir por 10 segundos)
+	// Simulate using the CS (sleep for 10 seconds)
 	time.Sleep(10 * time.Second)
 
-	// Após usar a CS, liberar
+	// After using the CS, release it
 	releaseCriticalSection()
 }
 
+// Release the critical section
 func releaseCriticalSection() {
-	// O canal indica que o releaseCriticalSection começou
+	// The channel indicates that releaseCriticalSection has started
 	isReleasing = true
 
 	state = RELEASED
-	printState() // Imprime o estado após mudança
+	printState() // Print the state after the change
 	color.Set(color.FgHiWhite)
-	fmt.Println("Liberando a seção crítica...") // Exibe mensagem de liberação
+	fmt.Println("Releasing the critical section...") // Show release message
 	color.Unset()
 
-	// Enviar replys para todos os processos na fila (requestQueue)
+	// Send replies to all processes in the requestQueue
 	for _, request := range requestQueue {
 		color.Set(color.FgHiWhite)
-		fmt.Printf("Enviando reply para o processo %d\n", request.ProcessId)
+		fmt.Printf("Sending reply to process %d\n", request.ProcessId)
 		color.Unset()
 
-		// Enviar a mensagem de reply para o processo que estava enfileirado
+		// Send the reply message to the queued process
 		go doClientJob(request.ProcessId, "reply", clock)
 	}
-	requestQueue = []Message{} // Limpar a fila de requests
+	requestQueue = []Message{} // Clear the request queue
 
-	replyMap = make(map[int]bool) // Reinicia o mapa de replies
+	replyMap = make(map[int]bool) // Reset the reply map
 
-	// Quando terminar, libera o canal
+	// When finished, release the channel
 	isReleasing = false
 }
 
-// func printStatePeriodically() {
-// 	for {
-// 		fmt.Println("Estado atual:", state)
-// 		time.Sleep(5 * time.Second) // Pausa por 5 segundos
-// 	}
-// }
+// Initialize the connections with other processes and the shared resource
+func initConnections() {
+	myPort = os.Args[1+processId]        // My server port
+	nServers = len(os.Args) - 3          // Calculate the number of servers (other processes)
+	CliConn = make(map[int]*net.UDPConn) // Initialize the map of connections
 
+	// Set up the server to receive messages
+	ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+myPort)
+	CheckError(err)
+	ServConn, err = net.ListenUDP("udp", ServerAddr)
+	CheckError(err)
+
+	// Initialize the connection to the SharedResource (critical section)
+	sharedResourceAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:"+sharedResourcePort)
+	CheckError(err)
+	sharedResourceConn, err = net.DialUDP("udp", nil, sharedResourceAddr) // Create a global connection to the SharedResource
+	CheckError(err)
+
+	// Initialize connections to each server for other processes, storing in CliConn map
+	for s := 0; s < nServers+1; s++ {
+		if s == processId-1 { // Skip my own port
+			continue
+		}
+
+		otherProcessId := s + 1
+
+		// Resolve the server address
+		ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+os.Args[2+s])
+		CheckError(err)
+
+		// Establish the UDP connection and store it in the map
+		Conn, err := net.DialUDP("udp", nil, ServerAddr)
+		CliConn[otherProcessId] = Conn
+		CheckError(err)
+	}
+}
+
+// Main function
 func main() {
-	// Parâmetros esperados: id do processo, portas dos processos
+	// Expected parameters: process ID, server ports
 	processId, _ = strconv.Atoi(os.Args[1])
 
-	// Verificar se o número de argumentos é suficiente
+	// Check if the number of arguments is sufficient
 	if len(os.Args) < 2+processId {
 		color.Set(color.FgRed)
-		fmt.Println("Erro: Argumentos insuficientes. Verifique o número de processos e portas.")
+		fmt.Println("Error: Insufficient arguments. Check the number of processes and ports.")
 		color.Unset()
 		os.Exit(1)
 	}
 
-	// Verificar se nenhuma das portas é a porta do SharedResource (10001)
+	// Check if any of the ports are the SharedResource port (10001)
 	for i := 2; i < len(os.Args); i++ {
 		if os.Args[i] == sharedResourcePort {
 			color.Set(color.FgRed)
-			fmt.Printf("Erro: Porta %s reservada para o SharedResource. Escolha outra porta.\n", sharedResourcePort)
+			fmt.Printf("Error: Port %s is reserved for the SharedResource. Choose another port.\n", sharedResourcePort)
 			color.Unset()
 			os.Exit(1)
 		}
 	}
 
-	// Inicializa o clock do processo
+	// Initialize the process clock
 	clock = 0
-	state = RELEASED // O estado inicial é RELEASED, ou seja, o processo não está na CS nem esperando
-	printState()     // Imprime o estado após mudança
-	// go printStatePeriodically()
+	state = RELEASED // Initial state is RELEASED, meaning the process is neither in CS nor waiting
+	printState()     // Print the state after the initialization
 
-	// Inicializa o map de replies
+	// Initialize the reply map and the isReleasing flag
 	replyMap = make(map[int]bool)
 	isReleasing = false
 
-	// Inicializa as conexões
+	// Initialize the connections with other processes
 	initConnections()
 
-	/* O fechamento de conexões deve ficar aqui, assim só fecha conexão quando a main morrer (usando defer) */
+	// Defer connection closure to ensure they are closed when the program terminates
 	defer ServConn.Close()
 	defer sharedResourceConn.Close()
 	for _, conn := range CliConn {
-		defer conn.Close() // Fecha cada conexão armazenada no map
+		defer conn.Close() // Close each connection stored in the map
 	}
 
-	ch := make(chan string) // Canal que guarda itens lidos do teclado
-	go readInput(ch)        // Chamar rotina que "escuta" o teclado (stdin)
+	// Set up a channel to handle keyboard input
+	ch := make(chan string) // Channel to store keyboard input
+	go readInput(ch)        // Call routine to "listen" to the keyboard (stdin)
 
-	go doServerJob()
+	go doServerJob() // Start server job to receive messages
 	for {
-		// Verificar (de forma não bloqueante) se tem algo no stdin (input do terminal)
-		select { // Trata o canal de forma não bloqueante. Ou seja, se não tiver nada, não fico bloqueado esperando
-		case input, valid := <-ch: // Também tratamos canal fechado (com valid). Mas nesse exemplo, ninguém fecha esse canal.
+		// Check for input from the terminal (stdin) in a non-blocking manner
+		select {
+		case input, valid := <-ch: // Also handle the case where the channel is closed (valid)
 			if valid {
-				handleKeyboardInput(input) // Função para tratar entrada do teclado
+				handleKeyboardInput(input) // Function to handle keyboard input
 			} else {
-				// Canal fechado
+				// Channel closed
 				color.Set(color.FgRed)
 				fmt.Println("Closed Keyboard channel!")
 				color.Unset()
 			}
 		default:
-			// Fazer nada!
-			// Mas não fica bloqueado esperando o teclado
+			// Do nothing
 			time.Sleep(time.Second * 1)
 		}
 
-		// Esperar um pouco
+		// Wait a bit
 		time.Sleep(time.Second * 1)
 	}
 }
