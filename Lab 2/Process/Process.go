@@ -179,6 +179,7 @@ func handleKeyboardInput(input string) {
 
 func requestCriticalSection() {
 	state = WANTED
+	printState() // Imprime o estado após mudança
 
 	// Simular o envio de mensagens de "request" para outros processos
 	fmt.Println("Enviando pedidos de seção crítica para outros processos...")
@@ -191,6 +192,7 @@ func requestCriticalSection() {
 
 func enterCriticalSection() {
 	state = HELD
+	printState() // Imprime o estado após mudança
 
 	// Obter a porta local da conexão `sharedResourceConn`
 	localAddr := sharedResourceConn.LocalAddr().(*net.UDPAddr)              // Converte para o tipo *net.UDPAddr
@@ -220,7 +222,9 @@ func enterCriticalSection() {
 
 func releaseCriticalSection() {
 	state = RELEASED
+	printState() // Imprime o estado após mudança
 	fmt.Println("Liberando a seção crítica")
+
 	// Simular o envio de mensagens de liberação (RELEASE) para outros processos
 	// Você pode chamar doClientJob() aqui para simular a liberação da CS para outros processos
 }
@@ -246,6 +250,7 @@ func main() {
 	// Inicializa o clock do processo
 	clock = 0
 	state = RELEASED // O estado inicial é RELEASED, ou seja, o processo não está na CS nem esperando
+	printState()     // Imprime o estado após mudança
 
 	// Inicializa as conexões
 	initConnections()
