@@ -20,7 +20,7 @@ const (
 )
 
 // Constant for the SharedResource port
-const sharedResourcePort = "10001"
+const sharedResourcePort = ":10001"
 
 // Struct definitions
 
@@ -331,7 +331,7 @@ func initConnections() {
 	CheckError(err)
 
 	// Initialize the connection to the SharedResource (critical section)
-	sharedResourceAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:"+sharedResourcePort)
+	sharedResourceAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+sharedResourcePort)
 	CheckError(err)
 	sharedResourceConn, err = net.DialUDP("udp", nil, sharedResourceAddr) // Create a global connection to the SharedResource
 	CheckError(err)
