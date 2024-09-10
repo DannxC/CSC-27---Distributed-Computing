@@ -278,7 +278,7 @@ func requestCriticalSection() {
 
 	// Esperar até receber N-1 replies
 	for len(replyMap) < nServers {
-		time.Sleep(500 * time.Millisecond) // Espera um curto intervalo antes de checar novamente
+		time.Sleep(2000 * time.Millisecond) // Espera um curto intervalo antes de checar novamente
 	}
 
 	// Simulação de entrada na seção crítica (recebimento de replies de outros processos)
@@ -310,8 +310,8 @@ func enterCriticalSection() {
 	_, err = sharedResourceConn.Write(jsonMsg)
 	CheckError(err)
 
-	// Simular o uso da CS (dormir por 2 segundos)
-	time.Sleep(2 * time.Second)
+	// Simular o uso da CS (dormir por 10 segundos)
+	time.Sleep(10 * time.Second)
 
 	// Após usar a CS, liberar
 	releaseCriticalSection()
