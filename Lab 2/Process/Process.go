@@ -48,7 +48,7 @@ var state int        // Estado do processo: RELEASED, WANTED ou HELD (Ricart-Agr
 
 var replyMap map[int]bool  // Mapa para rastrear quais processos já enviaram reply
 var requestQueue []Message // Fila de requests recebidos e não atendidos
-var doneReplying chan bool // Canal de sinalização para garantir a execução atômica de releaseCriticalSection
+var isReleasing bool
 
 var myPort string // porta do meu servidor
 // var CliConn []*net.UDPConn // vetor com conexões para os servidores // ANTIGO
@@ -236,8 +236,14 @@ func handleKeyboardInput(input string) {
 			fmt.Println("x ignorado, processo já está aguardando ou na seção crítica")
 			color.Unset()
 		} else {
-			// Solicitar acesso à seção crítica
-			requestCriticalSection()
+			if isReleasing {
+				color.Set(color.FgHiWhite)
+				fmt.Println("x ignorado, processo está liberando a seção crítica")
+				color.Unset()
+			} else {
+				// Caso receba 'x', solicita acesso à seção crítica
+				requestCriticalSection()
+			}
 		}
 	} else if id, err := strconv.Atoi(input); err == nil && id == processId {
 		// Caso receba o ID do processo, incrementa o clock lógico
@@ -254,14 +260,6 @@ func handleKeyboardInput(input string) {
 }
 
 func requestCriticalSection() {
-	// Verifica se ainda está liberando a seção crítica
-	if <-doneReplying {
-		color.Set(color.FgHiRed)
-		fmt.Println("Ainda liberando a seção crítica. Aguardando para entrar no estado WANTED...")
-		color.Unset()
-		return
-	}
-
 	clock++
 	requestClock = clock // Armazena o clock atual para os requests
 	state = WANTED
@@ -321,7 +319,7 @@ func enterCriticalSection() {
 
 func releaseCriticalSection() {
 	// O canal indica que o releaseCriticalSection começou
-	doneReplying <- true
+	isReleasing = true
 
 	state = RELEASED
 	printState() // Imprime o estado após mudança
@@ -343,7 +341,7 @@ func releaseCriticalSection() {
 	replyMap = make(map[int]bool) // Reinicia o mapa de replies
 
 	// Quando terminar, libera o canal
-	doneReplying <- false
+	isReleasing = false
 }
 
 // func printStatePeriodically() {
@@ -383,8 +381,7 @@ func main() {
 
 	// Inicializa o map de replies
 	replyMap = make(map[int]bool)
-	doneReplying = make(chan bool, 1) // Canal para sinalizar a execução atômica de releaseCriticalSection
-	doneReplying <- false             // Inicializa o canal com false
+	isReleasing = false
 
 	// Inicializa as conexões
 	initConnections()
