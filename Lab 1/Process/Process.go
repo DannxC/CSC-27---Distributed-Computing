@@ -167,6 +167,9 @@ func handleRequest(receivedMsg Message) {
 
 // Handle the received reply message
 func handleReply(receivedMsg Message) {
+	// Update the logical clock based on the received message
+	clock = max(clock, receivedMsg.Clock) + 1
+
 	if state == WANTED {
 		if !replyMap[receivedMsg.ProcessId] {
 			// Mark that a reply was received from this process
