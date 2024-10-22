@@ -1,11 +1,10 @@
 package main
 
 import (
-	//"fmt"
 	"hash/fnv"
 	"labMapReduce/mapreduce"
 
-	//"strconv"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -28,17 +27,22 @@ func mapFunc(input []byte) (result []mapreduce.KeyValue) {
 
 	words = strings.FieldsFunc(text, delimiterFunc)
 
-	//fmt.Printf("%v\n", words) //Para ajudar nos testes. Precisa da biblioteca fmt (acima comentada)
+	// fmt.Printf("%v\n", words) //Para ajudar nos testes. Precisa da biblioteca fmt (acima comentada)
 
 	result = make([]mapreduce.KeyValue, 0)
 
 	for _, word := range words {
-		//COMPLETAR ESSE CÓDIGO
-		//Basta colocar em result os itens <word,"1">
-		//Lembrando: word em minúsculo!
+		// Convert word to lowercase
+		word = strings.ToLower(word)
+
+		// Create a pair <word, "1">
+		kv := mapreduce.KeyValue{Key: word, Value: "1"}
+
+		// Add the pair to the result
+		result = append(result, kv)
 	}
 
-	//fmt.Printf("%v\n", result) //Para ajudar nos testes. Precisa da biblioteca fmt (acima comentada)
+	// fmt.Printf("%v\n", result) //Para ajudar nos testes. Precisa da biblioteca fmt (acima comentada)
 
 	return result
 }
@@ -66,9 +70,25 @@ func reduceFunc(input []mapreduce.KeyValue) (result []mapreduce.KeyValue) {
 	//	To convert int to string, use:
 	//	package strconv: func Itoa(i int) string
 
-	//COMPLETAR ESSE CÓDIGO!!!
+	// Auxiliary map to store the word count
+	mapAux := make(map[string]int)
 
-	//fmt.Printf("%v\n", result) //Para ajudar nos testes. Precisa da biblioteca fmt (acima comentada)
+	// Sum counts for each word
+	for _, item := range input {
+		count, _ := strconv.Atoi(item.Value)
+		mapAux[item.Key] += count
+	}
+
+	// Prepare the result slice
+	result = make([]mapreduce.KeyValue, 0, len(mapAux))
+
+	// Convert the map back to a slice of KeyValue
+	for key, value := range mapAux {
+		kv := mapreduce.KeyValue{Key: key, Value: strconv.Itoa(value)}
+		result = append(result, kv)
+	}
+
+	// fmt.Printf("%v\n", result) //Para ajudar nos testes. Precisa da biblioteca fmt (acima comentada)
 
 	return result
 }
